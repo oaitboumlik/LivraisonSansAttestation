@@ -6,11 +6,14 @@ def preprocess(df: pd.DataFrame):
     et formatte les dates en type datetime
     pour ensuite en extraire année, jour, mois, heure et jour de la semaine
     Réordonne les données temporellement
+    Resampling pour compléter les données absentes
+    Interpolation temporelle des données
     """
     temp = df[["Débit horaire", "Taux d'occupation"]].copy()
     temp["Date et heure de comptage"] = pd.to_datetime(df["Date et heure de comptage"], utc=True)
     temp = temp.sort_values("Date et heure de comptage")
     temp = temp.set_index("Date et heure de comptage")
+    temp = temp.resample("1H").first()
     temp["datetime"] = temp.index
     temp["year"] = temp.index.year
     temp["month"] = temp.index.month

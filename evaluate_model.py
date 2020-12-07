@@ -9,9 +9,9 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 
-horizon = 10
-initial = 200 # en jours
-period = 5
+horizon = 6
+initial = 300 # en jours
+period = 3
 
 def eval_pred(data, model, initial=initial*24, horizon=horizon*24, period=period*24):
     """

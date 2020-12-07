@@ -102,7 +102,7 @@ def add_school_holidays(df):
     sd_printemps = pd.Timestamp('2020-04-04')
     ed_printemps = pd.Timestamp('2020-04-20')
 
-    sd_ascension = pd.Timestamp('2019-05-20')
+    sd_ascension = pd.Timestamp('2020-05-20')
     ed_ascension = pd.Timestamp('2020-05-25')
 
     sd_toussaint = pd.Timestamp('2020-10-17')

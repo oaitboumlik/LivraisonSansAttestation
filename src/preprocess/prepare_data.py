@@ -1,7 +1,7 @@
 import pandas as pd
-import os
 import numpy as np
-
+import os
+from datetime import timedelta, datetime
 
 def preprocess(df: pd.DataFrame):
     """
@@ -9,8 +9,6 @@ def preprocess(df: pd.DataFrame):
     et formatte les dates en type datetime
     pour ensuite en extraire année, jour, mois, heure et jour de la semaine
     Réordonne les données temporellement
-    Resampling pour compléter les données absentes
-    Interpolation temporelle des données
     """
     temp = df[["Débit horaire", "Taux d'occupation"]].copy()
     temp["Date et heure de comptage"] = pd.to_datetime(df["Date et heure de comptage"], utc=True)
@@ -24,17 +22,18 @@ def preprocess(df: pd.DataFrame):
     temp["hour"] = temp.index.hour
     # Récupère les jours de la semaine : 0 -> lundi, 6 -> dimanche
     temp["dayofweek"] = temp.index.dayofweek
-    temp[["Débit horaire", "Taux d'occupation"]] = temp[["Débit horaire", "Taux d'occupation"]].interpolate("time")
+    temp["Débit horaire"] = temp.groupby(["month", "dayofweek", "hour"])["Débit horaire"].transform(lambda x: x.fillna(x.mean()))
+    temp["Taux d'occupation"] = temp.groupby(["month", "dayofweek", "hour"])["Taux d'occupation"].transform(lambda x: x.fillna(x.mean()))
+    # temp[["Débit horaire", "Taux d'occupation"]] = temp[["Débit horaire", "Taux d'occupation"]].interpolate("time")
     return temp
 
-def get_covid_data(path):
+def get_covid_data(path="data/OxCGRT_latest.csv"):
     """
     Récupère les données covid pour la France récoltées par Oxford
     Ces données apporte des informations sur les restrictions gouvernementales
     Une explication des données covid est disponible dans le fichier data/doc-oxford.pdf
     """
-    oxford_data = pd.read_csv(os.path.join(path, "OxCGRT_latest.csv"),
-                    sep=";")
+    oxford_data = pd.read_csv(path, sep=";")
     france_data = oxford_data[oxford_data["CountryName"] == "France"]
     france_data = france_data[['Date', 'C1_School closing',
         'C2_Workplace closing', 'C3_Cancel public events',
@@ -47,6 +46,25 @@ def get_covid_data(path):
     france_data = france_data.interpolate("time")
     france_data = france_data.reset_index(drop=True)
     return france_data
+
+def interpolate_covid_data(covid_data: pd.DataFrame, num_interpolation_day=1):
+    """
+    Pour pouvoir utiliser les données du Covid sur de nouvelles dates,
+    il faut interpoler ces valeurs, l'interpolation peut se faire en 
+    gardant les dernières valeurs apparues dans les données, ou en 
+    ajoutant les données transmises par le gouvernement à la main.
+    Pour l'instant l'interpolation naive est utilisée.
+    """
+    interpolation = covid_data.copy()
+    max_date = interpolation["Date"].max()
+    to_add = pd.DataFrame({
+        "Date": pd.date_range(max_date+timedelta(days=1), max_date+timedelta(days=num_interpolation_day))
+    })
+    interpolation = interpolation.append(to_add, ignore_index=True)
+    interpolation = interpolation.set_index("Date")
+    interpolation = interpolation.interpolate("time")
+    interpolation = interpolation.reset_index()
+    return interpolation
 
 def add_covid_data(df: pd.DataFrame, covid_data_france:pd.DataFrame):
     """
@@ -77,6 +95,7 @@ def get_holidays_data(path):
     data_jours_feriers = pd.read_csv(os.path.join(path, 'jours_feries_metropole.csv'),
                                      parse_dates=True, sep=',')
     data_jours_feriers = data_jours_feriers.loc[data_jours_feriers['zone'] == 'Métropole'].reset_index(drop=True)
+    data_jours_feriers["nom_jour_ferie"] = data_jours_feriers["nom_jour_ferie"].str.encode("ascii", errors="ignore").str.decode("utf-8")
     data_jours_feriers['date'] = data_jours_feriers['date'].apply(lambda x: pd.to_datetime(x, format='%Y-%m-%d'))
 
     return data_vacance_scolaire, data_jours_feriers
@@ -114,7 +133,7 @@ def add_school_holidays(df):
         elif (x >= sd_hiver and x < ed_hiver):
             return 'hiver'
         elif (x >= sd_ete and x < ed_ete):
-            return 'été'
+            return 'ete'
         elif (x >= sd_printemps and x < ed_printemps):
             return 'printemps'
         elif (x >= sd_ascension and x < ed_ascension):
@@ -128,3 +147,40 @@ def add_school_holidays(df):
     df['vacance_scolaire'] = df['nom_vacance_scolaire'].map(lambda x: 0 if pd.isnull(x) else 1)
     return df
 
+def generate_data(start_date, num_days, covid_path, holidays_path, final_path):
+    # Generate the date range
+    df = pd.DataFrame({
+        "datetime": pd.date_range(start=start_date, end=start_date+timedelta(days=num_days), freq="H")
+    })
+    df.index = df["datetime"]
+    df["year"] = df.index.year
+    df["month"] = df.index.month
+    df["day"] = df.index.day
+    df["hour"] = df.index.hour
+    # Récupère les jours de la semaine : 0 -> lundi, 6 -> dimanche
+    df["dayofweek"] = df.index.dayofweek
+    # Get covid data
+    covid_data_france = get_covid_data(covid_path)
+    # Interpolate covid data for our date range
+    max_day_covid = covid_data_france["Date"].max()
+    num_days_interpolation = max(start_date + timedelta(days=num_days) - max_day_covid, timedelta(days=1)).days
+    covid_interpolation = interpolate_covid_data(covid_data_france, num_days_interpolation)
+    # Add covid data to our generated dataset
+    df = add_covid_data(df, covid_interpolation)
+    # Get holidays data
+    data_vacance_scolaire ,data_jours_feries = get_holidays_data(holidays_path)
+    df = add_jours_feries(df, data_jours_feries)
+    df = add_school_holidays(df)
+    df.nom_jour_ferie.fillna('pas_ferie', inplace=True)
+    df.nom_vacance_scolaire.fillna('pas_vacance', inplace=True)
+    ferie_classes = list(pd.read_csv(os.path.join(final_path, "ferie_correspondance.csv"), sep="\t").to_numpy().flatten())
+    vacance_classes = list(pd.read_csv(os.path.join(final_path, "vacance_correspondance.csv"), sep="\t").to_numpy().flatten())
+    df["nom_jour_ferie"] = pd.Categorical(df["nom_jour_ferie"], categories=ferie_classes).codes
+    df["nom_vacance_scolaire"] = pd.Categorical(df["nom_vacance_scolaire"], categories=vacance_classes).codes
+    return df
+
+
+# data_folder = "../data/final_data"
+# covid_path = "../data/covid_data/OxCGRT_latest.csv"
+# holidays_path = "../data/data_holidays"
+# generate_data(datetime(2020,12,11), 6, covid_path, holidays_path, data_folder).iloc[:-1]

@@ -115,3 +115,5 @@ if __name__ == '__main__':
     # concat_meteo_traffic("../data/meteo/meteo_copie.csv", "../data/traffic/Champs-Elysées.csv",
     #                      "../data/merge_meteo_Champs_Elysees.csv", ";")
 
+    # open_npz("../biblio/基于时空注意力机制的图卷积神经网络/pems04.npz")
+
